@@ -75,5 +75,11 @@ app.listen(port, () => {
   console.log(`Palvelin käynnissä portissa ${port}`);
 });
 
+// Vercel serverless function handler
+export default async function handler(req, res) {
+  // Ohjaa pyynnöt Express-sovellukselle
+  return app(req, res);
+}
+
 // Vercel serverless function export
 module.exports = app;
