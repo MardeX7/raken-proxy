@@ -1,30 +1,19 @@
-// Krakenin API-välipalvelin
-const express = require('express');
-const cors = require('cors');
-const KrakenClient = require('kraken-api');
-const dotenv = require('dotenv');
+const express = require('express' );
+const axios = require('axios');
+const crypto = require('crypto');
+require('dotenv').config();
 
-// Lataa ympäristömuuttujat .env-tiedostosta
-dotenv.config();
-
-// Luo Express-sovellus
 const app = express();
-app.use(cors());
+const port = process.env.PORT || 3000;
+
+// Middleware
 app.use(express.json());
 
-// Tarkista, että API-avaimet on määritetty
+// Krakenin API-avaimet ympäristömuuttujista
 const API_KEY = process.env.KRAKEN_API_KEY;
 const API_SECRET = process.env.KRAKEN_API_SECRET;
 
-if (!API_KEY || !API_SECRET) {
-  console.error('KRAKEN_API_KEY ja KRAKEN_API_SECRET täytyy määrittää .env-tiedostossa');
-  process.exit(1);
-}
-
-// Luo Kraken-asiakas
-const kraken = new KrakenClient(API_KEY, API_SECRET);
-
-// Reitti terveystarkistukselle
+// Tervetulosivu
 app.get('/', (req, res) => {
   res.json({
     status: 'ok',
@@ -32,94 +21,59 @@ app.get('/', (req, res) => {
   });
 });
 
-// Reitti saldon hakemiseen
-app.post('/getBalance', async (req, res) => {
+// Julkinen API: Palvelimen aika
+app.get('/api/time', async (req, res) => {
   try {
-    const balance = await kraken.api('Balance');
-    
-    res.json({
-      success: true,
-      message: 'Saldo haettu onnistuneesti',
-      data: balance.result,
-      timestamp: new Date().toISOString()
-    });
+    const response = await axios.get('https://api.kraken.com/0/public/Time' );
+    res.json(response.data);
   } catch (error) {
-    console.error('Virhe saldon haussa:', error);
-    
-    res.json({
-      success: false,
-      message: `Virhe saldon haussa: ${error.message}`,
-      data: null,
-      timestamp: new Date().toISOString()
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Reitti LTC:n ostamiseen
-app.post('/buyLTC', async (req, res) => {
+// Yksityinen API: Tilin saldo
+app.get('/api/balance', async (req, res) => {
   try {
-    const volume = req.body.volume || 0.01;
+    const endpoint = '/0/private/Balance';
+    const nonce = Date.now().toString();
     
-    const order = await kraken.api('AddOrder', {
-      pair: 'LTCEUR',
-      type: 'buy',
-      ordertype: 'market',
-      volume: volume.toString()
-    });
+    // Luo allekirjoitus
+    const signature = createSignature(endpoint, nonce, `nonce=${nonce}`);
     
-    res.json({
-      success: true,
-      message: `LTC:n osto onnistui: ${volume} LTC`,
-      data: order.result,
-      timestamp: new Date().toISOString()
-    });
+    // Tee API-kutsu
+    const response = await axios.post('https://api.kraken.com' + endpoint, `nonce=${nonce}`, {
+      headers: {
+        'API-Key': API_KEY,
+        'API-Sign': signature,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    } );
+    
+    res.json(response.data);
   } catch (error) {
-    console.error('Virhe LTC:n ostossa:', error);
-    
-    res.json({
-      success: false,
-      message: `Virhe LTC:n ostossa: ${error.message}`,
-      data: null,
-      timestamp: new Date().toISOString()
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Reitti LTC:n myymiseen
-app.post('/sellLTC', async (req, res) => {
-  try {
-    const volume = req.body.volume || 0.01;
-    
-    const order = await kraken.api('AddOrder', {
-      pair: 'LTCEUR',
-      type: 'sell',
-      ordertype: 'market',
-      volume: volume.toString()
-    });
-    
-    res.json({
-      success: true,
-      message: `LTC:n myynti onnistui: ${volume} LTC`,
-      data: order.result,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('Virhe LTC:n myynnissä:', error);
-    
-    res.json({
-      success: false,
-      message: `Virhe LTC:n myynnissä: ${error.message}`,
-      data: null,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
+// Funktio API-kutsun allekirjoituksen luomiseen
+function createSignature(endpoint, nonce, postData) {
+  // Luo SHA256-tiiviste
+  const message = nonce + postData;
+  const sha256 = crypto.createHash('sha256').update(message).digest();
+  
+  // Yhdistä endpoint ja SHA256-tiiviste
+  const secret = Buffer.from(API_SECRET, 'base64');
+  const hmac = crypto.createHmac('sha512', secret);
+  hmac.update(endpoint + sha256);
+  
+  // Palauta Base64-muodossa
+  return hmac.digest('base64');
+}
 
 // Käynnistä palvelin
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Palvelin käynnissä portissa ${PORT}`);
+app.listen(port, () => {
+  console.log(`Palvelin käynnissä portissa ${port}`);
 });
 
-// Vercel-tuki
+// Vercel serverless function export
 module.exports = app;
